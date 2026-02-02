@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SAP Program Oversight | PMO Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { background-color: #f8f9fa; }
+        .card { box-shadow: 0 4px 6px rgba(0,0,0,0.1); border: none; margin-bottom: 20px; }
+        .kpi-value { font-size: 2rem; font-weight: bold; }
+        .status-red { color: #dc3545; font-weight: bold; }
+        .status-green { color: #198754; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<nav class="navbar navbar-dark bg-dark mb-4">
+    <div class="container-fluid">
+        <span class="navbar-brand mb-0 h1">SAP S/4HANA Implementation - Program Board</span>
+    </div>
+</nav>
+
+<div class="container">
+    
+    <div class="row text-center">
+        <div class="col-md-4">
+            <div class="card p-3">
+                <h6 class="text-muted">Total Budget Spent</h6>
+                <div class="kpi-value">${{ "{:,.0f}".format(kpis['total_spend']) }}</div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card p-3">
+                <h6 class="text-muted">Program CPI (Efficiency)</h6>
+                <div class="kpi-value {% if kpis['avg_cpi'] < 1 %}text-danger{% else %}text-success{% endif %}">
+                    {{ kpis['avg_cpi'] }}
+                </div>
+                <small>Target: > 1.0</small>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card p-3">
+                <h6 class="text-muted">Active Scope Risks</h6>
+                <div class="kpi-value text-warning">{{ kpis['active_risks'] }}</div>
+                <small>Approved Change Requests</small>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-8">
+            <div class="card p-3">
+                <h5>Planned vs. Actual Progress (The S-Curve)</h5>
+                <canvas id="lineChart" height="150"></canvas>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card p-3">
+                <h5>Scope Creep Impact</h5>
+                <p class="text-muted small">Bubble Size = Cost Impact</p>
+                <canvas id="bubbleChart" height="300"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-12">
+            <div class="card p-3">
+                <h5>Workstream Status Report</h5>
+                <table class="table table-hover mt-3">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Workstream</th>
+                            <th>Owner</th>
+                            <th>Actual %</th>
+                            <th>Variance (Days)</th>
+                            <th>CPI</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for p in projects %}
+                        <tr>
+                            <td>{{ p['name'] }}</td>
+                            <td>{{ p['owner'] }}</td>
+                            <td>{{ p['actual_pct'] }}%</td>
+                            
+                            <td class="{% if p['schedule_variance'] < -5 %}text-danger{% elif p['schedule_variance'] < 0 %}text-warning{% endif %}">
+                                {{ p['schedule_variance'] }}%
+                            </td>
+                            
+                            <td>{{ p['cpi'] }}</td>
+                            
+                            <td>
+                                {% if p['schedule_variance'] < -10 %}
+                                    <span class="badge bg-danger">CRITICAL</span>
+                                {% elif p['schedule_variance'] < 0 %}
+                                    <span class="badge bg-warning text-dark">AT RISK</span>
+                                {% else %}
+                                    <span class="badge bg-success">ON TRACK</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // --- 1. Parse Data passed from Flask ---
+    const labels = JSON.parse('{{ chart_labels | safe }}');
+    const datasets = JSON.parse('{{ chart_datasets | safe }}');
+    const bubbleData = JSON.parse('{{ bubble_data | safe }}');
+
+    // --- 2. Build Line Chart (Progress) ---
+    // We want to graph "Supply Chain" (The failing one) vs "Finance" (The good one)
+    // You could graph all, but it gets messy. Let's pick two for clarity.
+    const ctxLine = document.getElementById('lineChart').getContext('2d');
+    new Chart(ctxLine, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Supply Chain (Actual)',
+                    data: datasets['WS_002']['actual'], // Accessing Python Dict via JS
+                    borderColor: 'rgb(255, 99, 132)', // Red
+                    tension: 0.3
+                },
+                {
+                    label: 'Supply Chain (Plan)',
+                    data: datasets['WS_002']['planned'],
+                    borderColor: 'rgb(255, 99, 132)',
+                    borderDash: [5, 5], // Dashed line for Plan
+                    pointRadius: 0
+                },
+                {
+                    label: 'Finance (Actual)',
+                    data: datasets['WS_001']['actual'],
+                    borderColor: 'rgb(75, 192, 192)', // Green
+                    tension: 0.3
+                }
+            ]
+        },
+        options: { responsive: true }
+    });
+
+    // --- 3. Build Bubble Chart (Risk) ---
+    const ctxBubble = document.getElementById('bubbleChart').getContext('2d');
+    new Chart(ctxBubble, {
+        type: 'bubble',
+        data: {
+            datasets: bubbleData.map(item => ({
+                label: item.label,
+                data: [{x: item.x, y: item.y, r: item.r}],
+                backgroundColor: item.y < -5 ? 'rgba(255, 99, 132, 0.6)' : 'rgba(75, 192, 192, 0.6)'
+            }))
+        },
+        options: {
+            scales: {
+                x: { title: { display: true, text: 'Number of Change Requests' } },
+                y: { title: { display: true, text: 'Schedule Variance (Negative = Late)' } }
+            },
+            plugins: {
+                legend: { display: false }, // Hide legend to save space
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            return context.raw.x + " CRs | " + context.raw.y + "% Variance";
+                        }
+                    }
+                }
+            }
+        }
+    });
+</script>
+
+</body>
+</html>
